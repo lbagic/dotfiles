@@ -1,0 +1,4 @@
+[user]
+	email = luka@elude.co
+[core]
+  sshCommand = ssh -i ~/.ssh/elude

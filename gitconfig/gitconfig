@@ -1,0 +1,14 @@
+[user]
+  email = luka.bagi@gmail.com
+  name = Luka Bagic
+[github]
+  user = lbagic
+[push]
+	autoSetupRemote = true
+
+[includeIf "gitdir:~/workspace/elude/"] path = ~/.gitconfig.d/elude
+[includeIf "gitdir:~/workspace/astrosynapse/"] path = ~/.gitconfig.d/astrosynapse
+[includeIf "gitdir:~/workspace/codilas/"] path = ~/.gitconfig.d/codilas
+[includeIf "gitdir:~/workspace/coreline"] path = ~/.gitconfig.d/coreline
+[includeIf "gitdir:~/workspace/elude/"] path = ~/.gitconfig.d/elude
+[includeIf "gitdir:~/workspace/sintezis/"] path = ~/.gitconfig.d/sintezis

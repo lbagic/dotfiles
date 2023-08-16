@@ -1,0 +1,25 @@
+- defaults:
+    link:
+      relink: true
+      create: true
+      force: true # We are opinionated.
+
+- clean: ["~"]
+
+- shell:
+    - [git submodule update --init --recursive, Installing submodules]
+
+- link:
+    ~/.zshrc: zsh/zshrc
+    ~/:
+      glob: True
+      path: gitconfig/*
+      prefix: "."
+
+- create:
+    - ~/workspace/personal
+    - ~/workspace/astrosynapse
+    - ~/workspace/codilas
+    - ~/workspace/coreline
+    - ~/workspace/elude
+    - ~/workspace/sintezis

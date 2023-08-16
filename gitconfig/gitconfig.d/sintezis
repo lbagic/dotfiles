@@ -1,0 +1,4 @@
+[user]
+	email = luka.bagic@sintezis.co
+[core]
+  sshCommand = ssh -i ~/.ssh/sintezis

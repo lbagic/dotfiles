@@ -1,0 +1,4 @@
+[user]
+	email = luka.bagi@gmail.com
+[core]
+  sshCommand = ssh -i ~/.ssh/astrosynapse

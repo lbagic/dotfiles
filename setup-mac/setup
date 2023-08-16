@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+set -e
+echo "Setup Mac starting..."
+
+# key repeat interval
+defaults write -g InitialKeyRepeat -int 15
+defaults write -g KeyRepeat -int 1
+
+# tap to click
+defaults write com.apple.AppleMultitouchTrackpad Clicking -int 1
+defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad Clicking -int 1
+
+# autocorrect
+defaults write -g NSAutomaticCapitalizationEnabled -bool false
+defaults write -g NSAutomaticPeriodSubstitutionEnabled -bool false
+defaults write -g NSAutomaticSpellingCorrectionEnabled -bool false
+
+# menu bar
+defaults write -g _HIHideMenuBar -int 0
+defaults write com.apple.controlcenter "NSStatusItem Visible Bluetooth" -int 1
+defaults write com.apple.controlcenter "NSStatusItem Visible Sound" -int 1
+
+# siri
+defaults write com.apple.Siri SiriPrefStashedStatusMenuVisible -int 0
+defaults write com.apple.Siri VoiceTriggerUserEnabled -int 0
+
+# dock
+defaults write com.apple.dock autohide -bool true
+defaults write com.apple.dock autohide-delay -float 0
+defaults write com.apple.dock autohide-time-modifier -float 0
+defaults write com.apple.dock show-recents -bool false
+defaults write com.apple.dock size-immutable -bool true
+defaults write com.apple.dock tilesize -int 42
+
+# hot corners
+defaults write com.apple.dock wvous-bl-corner -int 0
+defaults write com.apple.dock wvous-br-corner -int 0
+defaults write com.apple.dock wvous-tl-corner -int 0
+defaults write com.apple.dock wvous-tr-corner -int 0
+
+# finder
+defaults write -g AppleShowAllExtensions -int 1
+defaults write com.apple.finder FXPreferredViewStyle -string "Nlsv"
+defaults write com.apple.finder ShowPathbar -bool true
+
+# spotlight
+sudo mdutil -i off
+defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 64 "<dict><key>enabled</key><false/><key>value</key><dict><key>type</key><string>standard</string><key>parameters</key><array><integer>65535</integer><integer>49</integer><integer>1572864</integer></array></dict></dict>"
+
+# startup chime
+sudo nvram StartupMute=%01
+
+echo "Setup Mac done!"
+set +e
