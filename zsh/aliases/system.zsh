@@ -23,10 +23,17 @@ alias q="exit"
 alias r="clear; exec zsh -l"
 # alias reload="source ~/.zshrc"
 alias run="npm run"
+alias dev="npm run dev"
+alias npmlistg="npm list -g --depth=0"
 
 alias chosts="code /private/etc/hosts"
 alias cssh="code ~/.ssh/config"
 alias cgit="code ~/.gitconfig"
+
+function myip() {
+  echo "public - $(curl -s ifconfig.me)"
+  echo "private - $(ifconfig | grep 'inet ' | grep -v '127.0.0.1' | awk '{print $2}')"
+}
 
 
 ## some OS dependent aliases ##
