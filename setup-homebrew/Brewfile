@@ -1,32 +1,42 @@
 tap "homebrew/bundle"
 tap "homebrew/cask-versions"
 
+# Essentials
 cask "raycast"
 cask "google-chrome"
 cask "visual-studio-code"
 
-brew "python"
+# Languages
 brew "go"
-brew "imagemagick"
-brew "aws-console"
-brew "fnm"
-brew "postgresql@14"
-brew "libpq"
+brew "python"
 
-cask "docker"
+# CLIs
+brew "aws-elasticbeanstalk"
+brew "awscli"
 brew "docker"
-cask "firefox"
-cask "microsoft-edge"
-cask "discord"
-cask "slack"
-cask "whatsapp"
-cask "zoom"
+brew "fnm"
+brew "libpq"
+brew "postgresql@14"
 cask "dbeaver-community"
-cask "rectangle"
+cask "docker"
+
+# Apps & Utils
+brew "ffmpeg"
+brew "imagemagick"
+cask "discord"
+cask "firefox"
+cask "imageoptim"
+cask "microsoft-edge"
 cask "numi"
 cask "postman"
 cask "qbittorrent"
+cask "rectangle"
+cask "slack"
 cask "vlc"
+cask "whatsapp"
+cask "zoom"
+
+# Games
 cask "battle-net"
 cask "epic-games"
 cask "origin"
