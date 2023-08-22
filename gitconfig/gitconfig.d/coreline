@@ -1,4 +1,6 @@
 [user]
 	email = luka.bagic@coreline.agency
+[github]
+  user = lbagic-coreline
 [core]
   sshCommand = ssh -i ~/.ssh/coreline

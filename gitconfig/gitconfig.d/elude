@@ -1,4 +1,6 @@
 [user]
 	email = luka@elude.co
+[github]
+  user = lbagic-elude
 [core]
   sshCommand = ssh -i ~/.ssh/elude
