@@ -6,6 +6,7 @@ alias glog="git log --decorate --oneline --graph --color=always --pretty=format:
 alias gloga="glog --all"
 alias gp="git push origin HEAD"
 alias gd="git diff --compact-summary"
+alias gdiff="git diff -- . ':(exclude)package-lock.json'"
 alias ga="git add ."
 alias gc="git commit"
 alias gcm="git commit -m "

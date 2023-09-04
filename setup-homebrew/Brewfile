@@ -2,8 +2,8 @@ tap "homebrew/bundle"
 tap "homebrew/cask-versions"
 
 # Essentials
+cask "arc"
 cask "raycast"
-cask "google-chrome"
 cask "visual-studio-code"
 
 # Languages
@@ -24,9 +24,8 @@ cask "docker"
 brew "ffmpeg"
 brew "imagemagick"
 cask "discord"
-cask "firefox"
+cask "google-chrome"
 cask "imageoptim"
-cask "microsoft-edge"
 cask "numi"
 cask "postman"
 cask "qbittorrent"
