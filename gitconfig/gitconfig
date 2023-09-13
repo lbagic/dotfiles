@@ -5,6 +5,8 @@
   user = lbagic
 [push]
 	autoSetupRemote = true
+[alias]
+    amend = !git commit --amend
 
 [includeIf "gitdir:~/workspace/elude/"] path = ~/.gitconfig.d/elude
 [includeIf "gitdir:~/workspace/astrosynapse/"] path = ~/.gitconfig.d/astrosynapse
