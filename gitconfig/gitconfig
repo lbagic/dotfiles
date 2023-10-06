@@ -3,6 +3,8 @@
   name = Luka Bagic
 [github]
   user = lbagic
+[core]
+    ignorecase = false
 [push]
 	autoSetupRemote = true
 [alias]
