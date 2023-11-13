@@ -9,6 +9,7 @@
 	autoSetupRemote = true
 [alias]
     amend = !git commit --amend
+    remove-commit = "!f() { git rebase --onto $1^ $1; }; f"
 
 [includeIf "gitdir:~/workspace/elude/"] path = ~/.gitconfig.d/elude
 [includeIf "gitdir:~/workspace/astrosynapse/"] path = ~/.gitconfig.d/astrosynapse
