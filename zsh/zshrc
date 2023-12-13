@@ -9,3 +9,11 @@ autoload -U compinit && compinit
 
 # Load local config if present, for final overrides
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
+
+## CUSTOM SHIT - todo
+# JAVA JDK
+export PATH="/opt/homebrew/opt/openjdk@11/bin:$PATH"
+# ANDROID SDK
+export ANDROID_HOME=/Users/bax/Library/Android/sdk
+# export NODE_BINARY=$FNM_MULTISHELL_PATH/bin
+# export PATH="/opt/homebrew/opt/node@18/bin:$PATH"

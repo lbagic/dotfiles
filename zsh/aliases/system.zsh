@@ -1,11 +1,8 @@
 #!/usr/bin/env zsh
 
-alias dotfiles="code ~/.dotfiles"
-
 # Let aliases be sudo'ed
 alias sudo="sudo "
 alias python="python3"
-alias scaffold="npx @lbagic/scaffold@latest"
 
 # Detect which `ls` flavor is in use
 if ls --color > /dev/null 2>&1; then
@@ -24,7 +21,7 @@ alias r="clear; exec zsh -l"
 # alias reload="source ~/.zshrc"
 alias run="npm run"
 alias dev="npm run dev"
-alias npmlistg="npm list -g --depth=0"
+alias npmlg="npm list -g --depth=0"
 
 alias chosts="code /private/etc/hosts"
 alias cssh="code ~/.ssh/config"
