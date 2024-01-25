@@ -5,6 +5,7 @@ tap "homebrew/cask-versions"
 cask "arc"
 cask "raycast"
 cask "visual-studio-code"
+cask "figma"
 
 # Languages
 brew "go"

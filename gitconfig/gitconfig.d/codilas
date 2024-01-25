@@ -1,4 +1,4 @@
 [user]
-	email = luka.bagi@gmail.com
+	email = luka.bagic@codilas.com
 [core]
   sshCommand = ssh -i ~/.ssh/codilas
