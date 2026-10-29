@@ -1,0 +1,25 @@
+# Reset kitty keyboard protocol (Claude Code leaves it enabled on exit)
+[[ -t 1 ]] && printf '\x1b[<u'
+
+# Load custom config: config/ first, so aliases see its PATH
+for dir in ~/.dotfiles/zsh/config ~/.dotfiles/zsh/aliases; do
+	find "$dir" -type f \( -name '*.zsh' -o -name '*.sh' \) -print0 | sort -z |
+	while IFS= read -r -d $'\0' line; do
+		source "$line"
+	done
+done
+unset dir
+
+# In Claude Code's Bash tool a word starting with = (echo =====) stays literal
+[[ -n $CLAUDECODE ]] && unsetopt equals
+
+# Load env secrets (gitignored)
+[[ -f ~/.dotfiles/.env.local ]] && source ~/.dotfiles/.env.local
+
+# Enable all completions
+autoload -U compinit && compinit
+
+export PATH="$HOME/.local/bin:$PATH"
+
+# Load local config if present, for final overrides
+[[ -f ~/.zshrc.local ]] && source ~/.zshrc.local

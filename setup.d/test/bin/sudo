@@ -1,0 +1,3 @@
+#!/bin/bash
+# Test shim: records the call and runs nothing.
+printf 'sudo %s\n' "$*" >>"${SETUP_TEST_LOG:?SETUP_TEST_LOG is not set}"

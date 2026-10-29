@@ -1,0 +1,88 @@
+#!/bin/bash
+# Fake brew for setup.d/test/run. State lives in $SETUP_TEST_BREW:
+#   installed      "kind name" per installed entry (kind: tap, brew or cask)
+#   trusted        "key name" per trusted entry (key: taps, formulae or casks)
+#   fail-check-from  N: `bundle check` errors from its Nth call on
+#   fail-install   names `bundle` fails to install, one per line
+#   prefix/bin     what `link` and `unlink` fill and empty
+# Every call is logged to $SETUP_TEST_LOG as "brew ARGS".
+
+S=${SETUP_TEST_BREW:?SETUP_TEST_BREW is not set}
+printf 'brew %s\n' "$*" >>"${SETUP_TEST_LOG:?SETUP_TEST_LOG is not set}"
+touch "$S/installed" "$S/trusted"
+entries() { sed -E -n 's/^(tap|brew|cask) "([^"]+)".*/\1 \2/p' "$1"; }
+list() { # KEY: the JSON array body for one trust key
+  awk -v k="$1" '$1 == k { printf "%s\n    \"%s\"", (n++ ? "," : ""), $2 } END { if (n) printf "\n  " }' "$S/trusted"
+}
+
+case $1 in
+  --version) echo 'Homebrew 0.0.0-fake' ;;
+  --prefix) echo "$S/prefix" ;;
+  link)
+    # `link --force NAME`: only libpq is known, and it brings psql.
+    mkdir -p "$S/prefix/bin"
+    printf '#!/bin/sh\n' >"$S/prefix/bin/psql"
+    chmod +x "$S/prefix/bin/psql"
+    ;;
+  unlink) rm -f "$S/prefix/bin/psql" ;;
+  update) echo 'Already up-to-date.' ;;
+  trust)
+    case $2 in
+      --json=v1)
+        printf '{\n  "taps": [%s],\n  "formulae": [%s],\n  "casks": [%s],\n  "commands": []\n}\n' "$(list taps)" "$(list formulae)" "$(list casks)"
+        ;;
+      --tap) echo "taps $3" >>"$S/trusted" ;;
+      --formula) echo "formulae $3" >>"$S/trusted" ;;
+      --cask) echo "casks $3" >>"$S/trusted" ;;
+      *) exit 64 ;;
+    esac
+    ;;
+  info)
+    # A cask named NAME ships setup-test-NAME.app, a name no real Mac has in
+    # /Applications, and the package test.pkg.NAME.
+    printf '{"casks":[{"token":"%s","artifacts":[{"app":["setup-test-%s.app"]},{"uninstall":[{"pkgutil":"test.pkg.%s"}]}]}]}\n' "$4" "$4" "$4"
+    ;;
+  bundle)
+    file=${@: -1}
+    if [ "$2" = check ]; then
+      n=$(($(cat "$S/checks" 2>/dev/null || echo 0) + 1))
+      echo "$n" >"$S/checks"
+      if [ -f "$S/fail-check-from" ] && [ "$n" -ge "$(cat "$S/fail-check-from")" ]; then
+        echo 'Error: Failed to download https://formulae.brew.sh/api/cask.jws.json (simulated)'
+        exit 1
+      fi
+      missing=0
+      while read -r kind name; do
+        grep -qxF "$kind $name" "$S/installed" && continue
+        missing=1
+        case $kind in
+          tap) echo "→ Tap $name needs to be tapped." ;;
+          brew) echo "→ Formula $name needs to be installed." ;;
+          cask) echo "→ Cask $name needs to be installed." ;;
+        esac
+      done < <(entries "$file")
+      if [ "$missing" = 1 ]; then
+        echo 'Satisfy missing dependencies with `brew bundle install`.'
+        exit 1
+      fi
+      echo "The Brewfile's dependencies are satisfied."
+    else
+      rc=0
+      while read -r kind name; do
+        printf 'brew bundle entry: %s %s\n' "$kind" "$name" >>"$SETUP_TEST_LOG"
+        if grep -qxF "$name" "$S/fail-install" 2>/dev/null; then
+          echo "Installing $name has failed!"
+          rc=1
+          continue
+        fi
+        grep -qxF "$kind $name" "$S/installed" || echo "$kind $name" >>"$S/installed"
+        echo "Installing $name"
+      done < <(entries "$file")
+      exit $rc
+    fi
+    ;;
+  *)
+    echo "fake brew: unexpected: $*" >&2
+    exit 99
+    ;;
+esac

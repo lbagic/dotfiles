@@ -1,0 +1,6 @@
+#!/bin/bash
+# Test shim: `pkgutil --pkgs=^ID$` prints ID when $SETUP_TEST_BREW/pkgs lists it.
+id=${1#--pkgs=^}
+id=${id%\$}
+[ -n "${SETUP_TEST_BREW:-}" ] && grep -qxF "$id" "$SETUP_TEST_BREW/pkgs" 2>/dev/null && echo "$id"
+exit 0

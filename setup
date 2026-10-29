@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# macOS setup: ./setup list | show | plan | apply | undo | readme
+# Runs on the stock /bin/bash 3.2, from a checkout or an unzipped copy of
+# setup + setup.d. Decisions and reasons: setup.d/DESIGN.md.
+
+ROOT=$(cd "$(dirname "$0")" && pwd -P)
+SETUP_DIR=$ROOT/setup.d
+
+# shellcheck source=setup.d/lib.sh
+. "$SETUP_DIR/lib.sh"
+
+main "$@"

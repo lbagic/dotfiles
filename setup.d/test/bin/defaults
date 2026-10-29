@@ -1,0 +1,92 @@
+#!/bin/bash
+# Fake defaults for setup.d/test/run: a store of files under $SETUP_TEST_STORE,
+# one per host and domain, one "key<TAB>type<TAB>value" line per key.
+# Supports read, read-type, write with a type flag, delete and -currentHost.
+
+store=${SETUP_TEST_STORE:?SETUP_TEST_STORE is not set}
+log=${SETUP_TEST_LOG:?SETUP_TEST_LOG is not set}
+host=any
+if [ "$1" = -currentHost ]; then
+  host=current
+  shift
+fi
+verb=$1 dom=$2 key=$3
+case $dom in -g | -globalDomain | NSGlobalDomain) dom=NSGlobalDomain ;; esac
+file="$store/$host.$(printf '%s' "$dom" | tr '/' '%')"
+
+unsupported() {
+  printf 'defaults (test shim): unsupported: %s\n' "$*" >&2
+  printf 'defaults UNSUPPORTED %s\n' "$*" >>"$log"
+  exit 64
+}
+rejected() {
+  printf 'Command line interface to a user'"'"'s defaults.\nSyntax:\n\n'"'"'defaults'"'"' [-currentHost | -host <hostname>] followed by one of the following:\n' >&2
+  printf 'defaults REJECTED %s\n' "$*" >>"$log"
+  exit 1
+}
+missing() {
+  printf '\nThe domain/default pair of (%s, %s) does not exist\n' "$dom" "$key" >&2
+  exit 1
+}
+logged() {
+  local pre=''
+  [ "$host" = current ] && pre='-currentHost '
+  printf 'defaults %s%s\n' "$pre" "$*" >>"$log"
+}
+get() {
+  [ -f "$file" ] && awk -F'\t' -v k="$key" '$1 == k { print; exit }' "$file"
+}
+without_key() {
+  [ -f "$file" ] && awk -F'\t' -v k="$key" '$1 != k' "$file"
+}
+
+[ -n "$key" ] || unsupported "$@"
+case $verb in
+  read)
+    line=$(get)
+    [ -n "$line" ] || missing
+    printf '%s\n' "$line" | cut -f3-
+    ;;
+  read-type)
+    line=$(get)
+    [ -n "$line" ] || missing
+    printf 'Type is %s\n' "$(printf '%s\n' "$line" | cut -f2)"
+    ;;
+  write)
+    [ $# -eq 5 ] || unsupported "$@"
+    v=$5
+    # The real tool takes only yes, true, no or false after -bool, in any
+    # case, and prints its usage for anything else. For -int and -float this
+    # shim is stricter than the real tool, which turns text into 0.
+    case $4 in
+      -bool | -boolean)
+        t=boolean
+        case $(printf '%s' "$v" | tr '[:upper:]' '[:lower:]') in
+          true | yes) v=1 ;;
+          false | no) v=0 ;;
+          *) rejected "$@" ;;
+        esac
+        ;;
+      -int | -integer)
+        t=integer
+        printf '%s\n' "$v" | grep -qE '^-?[0-9]+$' || rejected "$@"
+        ;;
+      -float)
+        t=float
+        printf '%s\n' "$v" | grep -qE '^-?([0-9]+\.?[0-9]*|\.[0-9]+)$' || rejected "$@"
+        ;;
+      -string) t=string ;;
+      *) unsupported "$@" ;;
+    esac
+    mkdir -p "$store"
+    { without_key; printf '%s\t%s\t%s\n' "$key" "$t" "$v"; } >"$file.tmp" && mv "$file.tmp" "$file"
+    logged "$@"
+    ;;
+  delete)
+    [ -n "$(get)" ] || missing
+    without_key >"$file.tmp"
+    mv "$file.tmp" "$file"
+    logged "$@"
+    ;;
+  *) unsupported "$@" ;;
+esac

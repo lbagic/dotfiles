@@ -1,0 +1,11 @@
+# Defaults that are safe on anyone's Mac.
+homebrew
+apps-common
+files
+desktop
+menubar
+security
+screen-lock
+backup
+privacy
+updates

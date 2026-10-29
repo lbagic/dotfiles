@@ -1,0 +1,21 @@
+[core]
+  ignorecase = false
+[push]
+	autoSetupRemote = true
+[alias]
+  amend = !git commit --amend
+  remove-commit = "!f() { git rebase --onto $1^ $1; }; f"
+[filter "lfs"]
+	required = true
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+[branch]
+	sort = -committerdate
+[init]
+	defaultBranch = main
+
+# Your name, email and anything per machine: git reads this file last, and it
+# is not in the repo.
+[include]
+	path = ~/.gitconfig.local

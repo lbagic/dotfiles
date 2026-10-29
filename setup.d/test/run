@@ -1,0 +1,563 @@
+#!/usr/bin/env bash
+# Checks ./setup apply and undo without writing to this Mac. It runs a copy of
+# setup + setup.d with SETUP_TEST=1, HOME in a temp folder, and shims for
+# defaults, sudo, killall and pkgutil first on PATH. The real brew is never
+# found; the Homebrew cases use test/fake-brew. Step commands are recorded
+# instead of run. CHECK functions still read this Mac.
+# Run: bash setup.d/test/run        (-v also prints each apply and undo transcript)
+
+here=$(cd "$(dirname "$0")" && pwd -P)
+repo=$(cd "$here/../.." && pwd -P)
+sh_bin=${BASH:-/bin/bash}
+T=$(mktemp -d "${TMPDIR:-/tmp}/setup-test.XXXXXX") || exit 2
+T=$(cd "$T" && pwd -P) || exit 2
+# Everything below deletes under $T; an empty or foreign value must stop here.
+case $T in
+  */setup-test.??????) ;;
+  *)
+    echo "unexpected temp dir: '$T'" >&2
+    exit 2
+    ;;
+esac
+trap 'rm -rf "$T"' EXIT
+
+mkdir -p "$T/home" "$T/tree"
+cp -R "$repo/setup" "$repo/setup.d" "$T/tree/"
+cp "$here/fixture.sh" "$T/tree/setup.d/modules/fixture.sh"
+cp "$here/fixture-apps.sh" "$T/tree/setup.d/modules/fixture-apps.sh"
+
+for v in $(env | sed -n 's/^\(SETUP_FACT_[A-Z_]*\)=.*/\1/p'); do unset "$v"; done
+export HOME="$T/home" SETUP_TEST=1 SETUP_TEST_STORE="$T/store" SETUP_TEST_LOG="$T/calls.log" SETUP_TEST_BREW="$T/brew" NO_COLOR=1
+SYS_PATH=/usr/bin:/bin:/usr/sbin:/sbin
+SHIM_PATH="$T/tree/setup.d/test/bin:$SYS_PATH"
+RECEIPTS="$HOME/Library/Application Support/dotfiles-setup/receipts.tsv"
+TAB=$(printf '\t')
+
+passed=0 failed=0
+check() { # DESCRIPTION COMMAND...
+  local d=$1
+  shift
+  if "$@"; then
+    passed=$((passed + 1))
+    printf 'PASS  %s\n' "$d"
+  else
+    failed=$((failed + 1))
+    printf 'FAIL  %s\n' "$d"
+  fi
+}
+has() { printf '%s\n' "$1" | grep -qF -- "$2"; }
+fails() { ! "$@"; }
+lacks() { ! printf '%s\n' "$1" | grep -qF -- "$2"; }
+verbose=0
+[ "${1:-}" = -v ] && verbose=1
+transcript() {
+  [ "$verbose" = 1 ] && printf '%s\n' "$1" | sed 's/^/      | /'
+  return 0
+}
+S() { env PATH="$SHIM_PATH" "$sh_bin" "$T/tree/setup" "$@" 2>&1; }
+seed() { env PATH="$SHIM_PATH" defaults "$@" >/dev/null; }
+get() { env PATH="$SHIM_PATH" defaults "$@" 2>/dev/null; }
+gone() { ! get "$@" >/dev/null; }
+store() { (cd "$T/store" 2>/dev/null && for f in *; do [ -f "$f" ] && sed "s|^|$f$TAB|" "$f"; done) | sort; }
+calls() { cat "$SETUP_TEST_LOG" 2>/dev/null; }
+receipts() { cat "$RECEIPTS" 2>/dev/null; }
+count() { printf '%s\n' "$1" | grep -c -- "$2"; }
+# modfn MODULE CODE: run CODE with MODULE's functions loaded (describe mode reads nothing)
+modfn() {
+  (
+    ROOT="$T/tree" SETUP_DIR="$T/tree/setup.d"
+    . "$SETUP_DIR/lib.sh"
+    SETUP_RUN=$(mktemp -d "$T/run.XXXXXX") MODE=describe MODULE=$1
+    . "$SETUP_DIR/modules/$1.sh"
+    eval "$2"
+  )
+}
+fresh() {
+  rm -rf "$T/store" "$T/brew" "$HOME/Library" "$HOME/Applications"
+  mkdir -p "$T/store" "$T/brew"
+  : >"$SETUP_TEST_LOG"
+}
+# brew_has KIND NAME...: mark entries installed in the fake brew
+brew_has() {
+  local kind=$1 n
+  shift
+  for n in "$@"; do echo "$kind $n" >>"$T/brew/installed"; done
+}
+
+echo '== refusals'
+mkdir -p "$T/trip"
+for c in defaults sudo killall; do
+  printf '#!/bin/bash\necho "TRIPWIRE %s $*" >>"%s"\n' "$c" "$T/tripwire.log" >"$T/trip/$c"
+  chmod +x "$T/trip/$c"
+done
+fresh
+out=$(env PATH="$T/trip:$SYS_PATH" "$sh_bin" "$T/tree/setup" apply --yes files 2>&1)
+rc=$?
+printf '      %s\n' "$out"
+check 'apply refuses when defaults is not a test shim' [ "$rc" -ne 0 ]
+check '  and names the reason' has "$out" 'refusing to apply under SETUP_TEST=1'
+out=$(env PATH="$T/trip:$SYS_PATH" "$sh_bin" "$T/tree/setup" undo --yes files 2>&1)
+rc=$?
+check 'undo refuses the same way' [ "$rc" -ne 0 ]
+check '  and names the reason' has "$out" 'refusing to undo under SETUP_TEST=1'
+check '  and nothing reached a command' [ ! -e "$T/tripwire.log" ]
+out=$(env SETUP_FACT_MACOS=26.1 PATH="$SHIM_PATH" "$sh_bin" "$T/tree/setup" apply --yes files 2>&1)
+rc=$?
+printf '      %s\n' "$out"
+check 'apply refuses while a fact override is set' [ "$rc" -ne 0 ]
+check '  and names it' has "$out" 'SETUP_FACT_MACOS'
+check '  and wrote no setting' [ -z "$(store)" ]
+check '  and no receipt' [ ! -e "$RECEIPTS" ]
+
+echo
+echo '== apply and undo of plain settings'
+fresh
+seed write -g AppleShowAllExtensions -int 1
+seed write com.apple.finder ShowPathbar -bool true
+seed write com.apple.sharingd DiscoverableMode -string Everyone
+seed write com.apple.AdLib allowApplePersonalizedAdvertising -bool false
+seed -currentHost write -g com.apple.mouse.tapBehavior -int 1
+seed write -g InitialKeyRepeat -int 15
+seed write -g KeyRepeat -int 1
+for k in NSAutomaticCapitalizationEnabled NSAutomaticPeriodSubstitutionEnabled NSAutomaticSpellingCorrectionEnabled \
+  NSAutomaticQuoteSubstitutionEnabled NSAutomaticDashSubstitutionEnabled; do
+  seed write -g "$k" -bool false
+done
+seed write com.apple.dock autohide -bool true
+seed write com.apple.dock autohide-delay -float 0
+seed write com.apple.dock autohide-time-modifier -float 0
+seed write com.apple.dock show-recents -bool false
+seed write com.apple.dock tilesize -int 42
+seed write com.apple.dock mru-spaces -bool false
+for c in tl tr bl br; do seed write com.apple.dock "wvous-$c-corner" -int 0; done
+seed write com.apple.dock size-immutable -bool true
+seed write com.apple.finder FXPreferredViewStyle -string Nlsv
+seed write com.apple.finder FXRemoveOldTrashItems -bool true
+: >"$SETUP_TEST_LOG"
+seeded=$(store)
+M='files privacy trackpad keyboard dock finder-view'
+check 'the defaults shim rejects -bool 1, as the real tool does' fails env PATH="$SHIM_PATH" defaults write test.strict k -bool 1 2>/dev/null
+check '  and -int text' fails env PATH="$SHIM_PATH" defaults write test.strict k -int x 2>/dev/null
+: >"$SETUP_TEST_LOG"
+
+out=$(S plan $M)
+check 'plan finds exactly 7 changes' [ "$(count "$out" '^  set ')" -eq 7 ]
+out=$(S apply --yes $M)
+rc=$?
+transcript "$out"
+check 'apply exits 0' [ "$rc" -eq 0 ]
+check 'apply reports 7 changed' has "$out" 'Done: 7 changed, 0 failed.'
+expected=$(printf '%s\n' \
+  "any.NSGlobalDomain${TAB}AppleShowAllExtensions" \
+  "any.NSGlobalDomain${TAB}NSNavPanelExpandedStateForSaveMode" \
+  "any.com.apple.AppleMultitouchTrackpad${TAB}Clicking" \
+  "any.com.apple.dock${TAB}size-immutable" \
+  "any.com.apple.driver.AppleBluetoothMultitouch.trackpad${TAB}Clicking" \
+  "any.com.apple.finder${TAB}ShowStatusBar" \
+  "any.com.apple.sharingd${TAB}DiscoverableMode" | sort)
+printf '%s\n' "$seeded" >"$T/seeded"
+store >"$T/applied"
+changed=$(comm -3 "$T/seeded" "$T/applied" | sed "s/^$TAB//" | cut -f1,2 | sort -u)
+check 'apply wrote only the 7 set items' [ "$changed" = "$expected" ]
+check '  AppleShowAllExtensions changed type to boolean' [ "$(get read-type -g AppleShowAllExtensions)" = 'Type is boolean' ]
+check '  DiscoverableMode is Contacts Only' [ "$(get read com.apple.sharingd DiscoverableMode)" = 'Contacts Only' ]
+check '  size-immutable was deleted' gone read com.apple.dock size-immutable
+r=$(receipts)
+check 'one receipt per change (7)' [ "$(count "$r" .)" -eq 7 ]
+check '  receipt keeps the prior integer' has "$r" "files${TAB}-g AppleShowAllExtensions${TAB}integer${TAB}1"
+check '  receipt records an absent key' has "$r" "files${TAB}com.apple.finder ShowStatusBar${TAB}absent${TAB}"
+check '  receipt keeps the prior string' has "$r" "privacy${TAB}com.apple.sharingd DiscoverableMode${TAB}string${TAB}Everyone"
+check 'no receipt for items already at target' lacks "$r" 'ShowPathbar'
+check '  none for keyboard, whose items were all at target' lacks "$r" "keyboard${TAB}"
+c=$(calls)
+check 'Finder restarted once (files changed)' [ "$(count "$c" '^killall Finder$')" -eq 1 ]
+check 'Dock restarted once (dock changed)' [ "$(count "$c" '^killall Dock$')" -eq 1 ]
+check 'System Settings closed before writing' has "$c" 'killall System Settings'
+check 'no sudo for user-domain settings' lacks "$c" 'sudo'
+check 'logout list names trackpad' has "$out" 'Log out and back in to apply: trackpad'
+check '  but not keyboard, which had no change' lacks "$(printf '%s\n' "$out" | grep 'Log out')" keyboard
+
+before=$(calls)
+out=$(S apply --yes $M)
+rc=$?
+transcript "$out"
+check 'second apply finds nothing to do' has "$out" 'Nothing to change.'
+check '  exits 0' [ "$rc" -eq 0 ]
+check '  adds no receipt' [ "$(receipts)" = "$r" ]
+check '  runs no command' [ "$(calls)" = "$before" ]
+
+out=$(S undo --yes $M)
+rc=$?
+transcript "$out"
+check 'undo exits 0' [ "$rc" -eq 0 ]
+check 'undo reverts 7' has "$out" 'Done: 7 reverted, 0 failed.'
+check 'undo restores every value and type, and deletes keys that were absent' [ "$(store)" = "$seeded" ]
+check '  the boolean prior is written as true, never 1' has "$(calls)" 'defaults write com.apple.dock size-immutable -bool true'
+check 'undo drops the receipts' [ ! -e "$RECEIPTS" ]
+out=$(S undo --yes $M)
+transcript "$out"
+check 'second undo has nothing to do' has "$out" 'Nothing to undo'
+
+echo
+echo '== restarts only after a change'
+fresh
+seed write com.apple.finder FXPreferredViewStyle -string Nlsv
+seed write com.apple.finder FXRemoveOldTrashItems -bool true
+seed write com.apple.sharingd DiscoverableMode -string Everyone
+: >"$SETUP_TEST_LOG"
+out=$(S apply --yes finder-view)
+transcript "$out"
+check 'a module already at target: nothing to change' has "$out" 'Nothing to change.'
+check '  and no restart' [ -z "$(calls)" ]
+out=$(S apply --yes finder-view privacy)
+transcript "$out"
+check 'finder-view unchanged beside a changed module: no Finder restart' lacks "$(calls)" 'killall Finder'
+
+echo
+echo '== undo restores the earliest receipt'
+fresh
+seed write com.apple.sharingd DiscoverableMode -string Everyone
+seed write com.apple.AdLib allowApplePersonalizedAdvertising -bool false
+S apply --yes privacy >/dev/null
+seed write com.apple.sharingd DiscoverableMode -string Off
+S apply --yes privacy >/dev/null
+r=$(receipts)
+check 'two applies, two receipts' [ "$(count "$r" DiscoverableMode)" -eq 2 ]
+S undo --yes privacy >/dev/null
+check 'undo restores the value from before the first apply' [ "$(get read com.apple.sharingd DiscoverableMode)" = Everyone ]
+check '  and drops both receipts' [ ! -e "$RECEIPTS" ]
+
+echo
+echo '== every helper, through the fixture module'
+fresh
+seed write test.fixture ratio -float 0.25
+seed write test.fixture keep -string same
+seed write test.fixture loaded -string yes
+: >"$SETUP_TEST_LOG"
+out=$(S plan fixture)
+printf '%s\n' "$out" | sed -n '/^fixture:/,/^$/p' | sed 's/^/      /'
+check 'plan: -currentHost int absent → set' has "$out" 'set   -currentHost test.fixture host'
+check 'plan: float 0.25 → 0.5 is set' has "$out" 'set   test.fixture ratio'
+check 'plan: string at target is ok' has "$out" 'ok    test.fixture keep'
+check 'plan: file domain is [sudo]' [ "$(printf '%s\n' "$out" | grep 'test.fixture system' | grep -c '\[sudo\]')" -eq 1 ]
+check 'plan: manual item off target is todo' has "$out" 'todo  fixture hand step'
+check 'plan: a state only a restart clears is todo' has "$out" 'todo  fixture still loaded'
+check '  and the summary says to restart after apply' has "$out" 'After apply: Restart the Mac to unload the fixture.'
+out=$(S apply --yes fixture)
+rc=$?
+transcript "$out"
+c=$(calls)
+printf '%s\n' "$c" | sed 's/^/      call: /'
+check 'apply exits 0' [ "$rc" -eq 0 ]
+check 'sudo -v once, before the first change' [ "$(count "$c" '^sudo -v$')" -eq 1 ]
+check 'file-domain write goes through sudo' has "$c" 'sudo defaults write /Library/Preferences/test.fixture system -bool true'
+check '-sudo step is recorded with sudo' has "$c" 'run: sudo fixture-apply --on'
+check '-admin step is recorded without sudo' [ "$(count "$c" '^run: fixture-install$')" -eq 1 ]
+check 'restart after a change' has "$c" 'killall FixtureApp'
+check 'currentHost int written' [ "$(get -currentHost read test.fixture host)" = 3 ]
+check 'float written' [ "$(get read test.fixture ratio)" = 0.5 ]
+check 'manual instructions in the closing list' has "$out" '- fixture hand step: Do the fixture thing by hand.'
+check 'logout line' has "$out" 'Log out and back in to apply: fixture'
+check 'the switch did not take (its APPLY is only recorded): no restart line after apply' lacks "$(printf '%s\n' "$out" | sed -n '/^Applying:/,$p')" 'Restart the Mac to unload the fixture.'
+r=$(receipts)
+check 'five receipts (host, ratio, system, two steps)' [ "$(count "$r" .)" -eq 5 ]
+check '  the step receipt keeps the CHECK value' has "$r" "fixture${TAB}fixture switch${TAB}step${TAB}absent"
+check '  the float receipt keeps its type' has "$r" "fixture${TAB}test.fixture ratio${TAB}float${TAB}0.25"
+# The sudo shim runs nothing; write what sudo would have written, so undo has something to revert.
+seed write /Library/Preferences/test.fixture system -bool true
+: >"$SETUP_TEST_LOG"
+out=$(S undo --yes fixture)
+rc=$?
+transcript "$out"
+c=$(calls)
+printf '%s\n' "$c" | sed 's/^/      call: /'
+check 'undo exits 0' [ "$rc" -eq 0 ]
+check 'undo deletes the file-domain key through sudo' has "$c" 'sudo defaults delete /Library/Preferences/test.fixture system'
+check 'undo runs the step UNDO with sudo and $PRIOR' has "$c" 'run: sudo fixture-undo --to "$PRIOR"  [PRIOR=absent]'
+check 'print: undo prints instead of running' has "$out" 'by hand: remove the fixture by hand'
+check '  and runs nothing for it' lacks "$c" 'remove the fixture'
+check 'undo deletes the currentHost key that was absent' gone -currentHost read test.fixture host
+check 'undo restores the float value' [ "$(get read test.fixture ratio)" = 0.25 ]
+check '  and its type' [ "$(get read-type test.fixture ratio)" = 'Type is float' ]
+check 'undo leaves the item that was at target' [ "$(get read test.fixture keep)" = same ]
+check 'receipts are gone' [ ! -e "$RECEIPTS" ]
+fresh
+seed write test.fixture loaded -string no
+out=$(S plan fixture)
+check 'no restart line when the state is already clear' lacks "$out" 'Restart the Mac'
+fresh
+seed write test.fixture loaded -string yes
+seed write test.fixture state -string on
+out=$(S apply --yes fixture)
+rc=$?
+transcript "$out"
+check 'the switch is on and still loaded: apply exits 0' [ "$rc" -eq 0 ]
+check '  and the closing list says to restart' has "$(printf '%s\n' "$out" | sed -n '/^Applying:/,$p')" 'Restart the Mac to unload the fixture.'
+
+echo
+echo '== real step modules: CHECKs read this Mac, commands are recorded'
+fresh
+# A hotkey 64 with non-default parameters, so raycast-hotkey has a prior to restore.
+mkdir -p "$HOME/Library/Preferences"
+hk="$HOME/Library/Preferences/com.apple.symbolichotkeys.plist"
+for c in 'Add :AppleSymbolicHotKeys dict' 'Add :AppleSymbolicHotKeys:64 dict' 'Add :AppleSymbolicHotKeys:64:enabled bool false' \
+  'Add :AppleSymbolicHotKeys:64:value dict' 'Add :AppleSymbolicHotKeys:64:value:type string standard' \
+  'Add :AppleSymbolicHotKeys:64:value:parameters array' 'Add :AppleSymbolicHotKeys:64:value:parameters:0 integer 65535' \
+  'Add :AppleSymbolicHotKeys:64:value:parameters:1 integer 49' 'Add :AppleSymbolicHotKeys:64:value:parameters:2 integer 1572864'; do
+  /usr/libexec/PlistBuddy -c "$c" "$hk" >/dev/null
+done
+M='desktop security screen-lock quiet raycast-hotkey touchid-sudo'
+FIXED='socketfilterfw --setglobalstate off|rm /etc/pam.d/sudo_local'
+plan=$(S plan $M)
+out=$(S apply --yes $M)
+rc=$?
+transcript "$out"
+c=$(calls)
+printf '%s\n' "$c" | grep '^run: ' | sed 's/^/      /'
+nsteps=$(printf '%s\n' "$plan" | grep -c -E '^  set   (bottom-right|firewall|password|startup chime|Spotlight|Touch ID)')
+napplied=$(printf '%s\n' "$c" | grep '^run: ' | grep -vc activateSettings)
+check 'apply exits 0' [ "$rc" -eq 0 ]
+check "each set step's APPLY is recorded ($nsteps)" [ "$nsteps" -eq "$napplied" ]
+r=$(receipts)
+check 'receipts match the set rows' [ "$(count "$r" .)" -eq "$(count "$plan" '^  set ')" ]
+check 'steps whose UNDO is fixed applied only from the state it restores' [ -z "$(printf '%s\n' "$r" |
+  awk -F'\t' '($2 == "firewall on" && $4 != "0") || ($2 == "Touch ID for sudo" && $4 != "absent")')" ]
+nfixed=$(printf '%s\n' "$r" | awk -F'\t' '$2 == "firewall on" || $2 == "Touch ID for sudo"' | grep -c .)
+: >"$SETUP_TEST_LOG"
+out=$(S undo --yes $M)
+rc=$?
+transcript "$out"
+c=$(calls)
+printf '%s\n' "$c" | grep '^run: ' | sed 's/^/      /'
+undos=$(printf '%s\n' "$c" | grep '^run: ' | grep -v activateSettings)
+others=$(printf '%s\n' "$undos" | grep -v -E "$FIXED")
+check 'undo exits 0' [ "$rc" -eq 0 ]
+check "every other step's UNDO uses \$PRIOR ($((nsteps - nfixed)))" [ "$(printf '%s\n' "$others" | grep -c '\[PRIOR=')" -eq "$((nsteps - nfixed))" ]
+check '  raycast-hotkey restores the prior binding' has "$undos" '"$(spotlight_dict_from "$PRIOR")"  [PRIOR=enabled=false 65535,49,1572864]'
+check 'receipts are gone' [ ! -e "$RECEIPTS" ]
+d=$(modfn raycast-hotkey 'spotlight_dict_from "enabled=false 65535,49,1572864"')
+check 'spotlight_dict_from keeps a disabled prior disabled, with its keys' has "$d" '<false/>'
+check '  65535, 49, 1572864' has "$d" '<integer>65535</integer><integer>49</integer><integer>1572864</integer>'
+d=$(modfn raycast-hotkey "spotlight_dict_from 'absent (Spotlight on Command-Space)'")
+check '  an absent prior becomes Apple'"'"'s default, on at Command-Space' has "$d" '<true/>'
+
+echo
+echo '== homebrew installer: a failed or empty download, or no brew afterwards, is a failure'
+if type_ok=$(modfn homebrew 'type install_homebrew') && has "$type_ok" 'curl -fsSL "$HOMEBREW_INSTALLER"'; then
+  # curl is replaced by a function and the URL by a file:// one, so nothing is fetched.
+  hb() { modfn homebrew "HOMEBREW_INSTALLER=file:///nonexistent; $1; install_homebrew >/dev/null 2>&1"; }
+  check 'curl fails: not installed' fails hb 'curl() { return 22; }'
+  check 'empty download: not installed' fails hb 'curl() { : >"$4"; }'
+  check 'installer fails: not installed' fails hb 'curl() { echo "exit 3" >"$4"; }'
+  check 'installer exits 0 but no brew: not installed' fails hb 'curl() { echo "exit 0" >"$4"; }; brew_path() { return 1; }'
+  check 'installer exits 0 and brew is there: installed' hb 'curl() { echo "exit 0" >"$4"; }; brew_path() { echo /fake/bin/brew; }'
+else
+  check 'install_homebrew downloads with curl -fsSL "$HOMEBREW_INSTALLER" (needed to test it safely)' false
+fi
+
+echo
+echo '== Homebrew modules, with a fake brew'
+DEVF='git libpq auth0/auth0-cli/auth0'
+DEVC='visual-studio-code'
+fresh
+out=$(S plan homebrew apps-common fixture-apps)
+check 'no brew: Homebrew is absent' has "$out" 'set   Homebrew'
+check '  every Brewfile entry reads absent → install' [ "$(count "$out" '^  set   \(tap\|brew\|cask\) .* absent → install$')" -eq 13 ]
+check '  psql on PATH reads absent' has "$out" 'set   psql on PATH                                            absent → linked'
+check '  and never calls brew' lacks "$(calls)" 'brew '
+
+fresh
+: >"$T/brew/present"
+brew_has tap oven-sh/bun auth0/auth0-cli
+brew_has brew $DEVF
+brew_has cask $DEVC google-chrome
+echo 'formulae auth0/auth0-cli/auth0' >"$T/brew/trusted"
+mkdir -p "$HOME/Applications/setup-test-claude.app" "$HOME/Applications/setup-test-zoom.app"
+echo test.pkg.tailscale-app >"$T/brew/pkgs"
+echo whatsapp >"$T/brew/fail-install"
+mkdir -p "$T/brew/prefix/bin"
+printf '#!/bin/sh\n' >"$T/brew/prefix/bin/psql"
+chmod +x "$T/brew/prefix/bin/psql"
+out=$(S plan homebrew apps-common fixture-apps)
+transcript "$out"
+check 'with brew: Homebrew reads ok' has "$out" 'ok    Homebrew'
+check '  missing entries are set' [ "$(count "$out" '^  set   \(brew\|cask\) ')" -eq 3 ]
+check '  an app present outside Homebrew is a skip row' has "$(printf '%s\n' "$out" | grep 'cask claude')" 'skip  cask claude                                             setup-test-claude.app present, not from Homebrew'
+check '  so is a cask whose package has a receipt' has "$(printf '%s\n' "$out" | grep 'cask tailscale-app')" 'package test.pkg.tailscale-app installed, not from Homebrew'
+check '  the rest is one ok row' has "$out" 'fixture.Brewfile: other entries                         6 installed'
+check '  a formula already trusted is ok' has "$out" 'ok    trust formula auth0/auth0-cli/auth0'
+check '  psql already in brew'"'"'s bin is ok' has "$out" 'ok    psql on PATH'
+check '  an untrusted third-party formula is set' has "$out" 'set   trust formula oven-sh/bun/bun'
+check '  taps are never listed for trust' lacks "$out" 'trust tap'
+check '  bundle check lists every missing entry and never upgrades' has "$(calls)" 'brew bundle check --no-upgrade --verbose --file'
+check '  plan runs no brew command that changes anything' [ -z "$(calls | grep '^brew ' | grep -v -E '^brew (--version|--prefix|bundle check|info|trust --json=v1)')" ]
+
+out=$(S apply --yes homebrew apps-common fixture-apps)
+rc=$?
+transcript "$out"
+c=$(calls)
+r=$(receipts)
+check 'apply: brew update runs once for two Brewfiles' [ "$(count "$c" '^brew update$')" -eq 1 ]
+check '  the formula is trusted by name' has "$c" 'brew trust --formula oven-sh/bun/bun'
+check '  and no tap is ever trusted' lacks "$c" 'trust --tap'
+check '  brew bundle never upgrades' [ "$(count "$c" '^brew bundle --no-upgrade --file ')" -eq 2 ]
+check '  brew bundle gets only the missing entries' [ "$(printf '%s\n' "$c" | grep '^brew bundle entry: ' | grep -v ' tap ' | sort | tr '\n' ' ')" = 'brew bundle entry: brew oven-sh/bun/bun brew bundle entry: cask vlc brew bundle entry: cask whatsapp ' ]
+check '  installed entries are done' has "$out" 'done  cask vlc'
+check '  with a receipt' has "$r" "apps-common${TAB}cask vlc${TAB}absent"
+check '  the trust has a receipt' has "$r" "fixture-apps${TAB}trust formula oven-sh/bun/bun${TAB}untrusted"
+check '  an entry brew failed to install is a fail row' has "$out" 'fail  cask whatsapp                                           absent → still missing after brew bundle'
+check '  with no receipt' lacks "$r" 'whatsapp'
+check '  skipped casks stay out, with no receipt' lacks "$r" 'claude'
+check '  the failure is counted' has "$out" 'Done: 3 changed, 1 failed.'
+check '  and apply exits non-zero' [ "$rc" -ne 0 ]
+out=$(S plan apps-common fixture-apps)
+check 'the next plan shows only the failed entry' [ "$(printf '%s\n' "$out" | grep '^  set ' | tr -s ' ')" = ' set cask whatsapp absent → install' ]
+: >"$SETUP_TEST_LOG"
+out=$(S undo --yes apps-common fixture-apps)
+transcript "$out"
+check 'undo prints the uninstall line' has "$out" 'by hand: brew uninstall --cask vlc'
+check '  and the matching untrust' has "$out" 'by hand: brew untrust --formula oven-sh/bun/bun'
+check '  and runs no brew command' lacks "$(calls)" 'brew '
+check '  receipts are gone' [ ! -e "$RECEIPTS" ]
+
+fresh
+: >"$T/brew/present"
+brew_has tap oven-sh/bun auth0/auth0-cli
+brew_has brew $DEVF oven-sh/bun/bun
+brew_has cask $DEVC claude tailscale-app
+printf 'formulae auth0/auth0-cli/auth0\nformulae oven-sh/bun/bun\n' >"$T/brew/trusted"
+out=$(S plan fixture-apps)
+check 'libpq installed but keg-only: psql on PATH is the one change' [ "$(printf '%s\n' "$out" | grep '^  set ' | tr -s ' ')" = ' set psql on PATH absent → linked' ]
+out=$(S apply --yes fixture-apps)
+rc=$?
+transcript "$out"
+check '  apply links it through brew' has "$(calls)" 'brew link --force libpq'
+check '  exits 0, one change' has "$out" 'Done: 1 changed, 0 failed.'
+check '  exit status' [ "$rc" -eq 0 ]
+check '  psql is now in brew'"'"'s bin' [ -x "$T/brew/prefix/bin/psql" ]
+check '  with a receipt' has "$(receipts)" "fixture-apps${TAB}psql on PATH${TAB}step${TAB}absent"
+out=$(S plan fixture-apps)
+check '  the next plan reads linked' has "$out" 'ok    psql on PATH                                            linked → linked'
+: >"$SETUP_TEST_LOG"
+out=$(S undo --yes fixture-apps)
+rc=$?
+transcript "$out"
+check 'undo unlinks it through brew' has "$(calls)" 'brew unlink libpq'
+check '  exit status' [ "$rc" -eq 0 ]
+check '  psql is gone again' [ ! -e "$T/brew/prefix/bin/psql" ]
+check '  receipts are gone' [ ! -e "$RECEIPTS" ]
+fresh
+: >"$T/brew/present"
+brew_has tap oven-sh/bun auth0/auth0-cli
+brew_has brew $DEVF oven-sh/bun/bun
+brew_has cask $DEVC claude tailscale-app
+printf 'formulae auth0/auth0-cli/auth0\nformulae oven-sh/bun/bun\n' >"$T/brew/trusted"
+S apply --yes fixture-apps >/dev/null
+rm "$T/brew/present"
+: >"$SETUP_TEST_LOG"
+out=$(S undo --yes fixture-apps)
+rc=$?
+check 'undo without Homebrew: a fail row, the receipt is kept' has "$out" 'Homebrew not found'
+check '  exits non-zero' [ "$rc" -ne 0 ]
+check '  receipt kept' has "$(receipts)" 'psql on PATH'
+
+fresh
+: >"$T/brew/present"
+brew_has cask google-chrome
+echo 2 >"$T/brew/fail-check-from"
+out=$(S apply --yes apps-common)
+rc=$?
+transcript "$out"
+check 'bundle check works in the plan pass and errors in the apply pass: plan lists the entries' [ "$(count "$out" '^  set   cask ')" -eq 3 ]
+check '  apply prints a fail row for the Brewfile' has "$(printf '%s\n' "$out" | sed -n '/^Applying:/,$p' | grep '^  fail  setup.d/brew/common.Brewfile ')" 'brew bundle check: Error: Failed to download'
+check '  counts it' has "$out" 'Done: 0 changed, 1 failed.'
+check '  exits non-zero' [ "$rc" -ne 0 ]
+check '  installs nothing' lacks "$(calls)" 'brew bundle --no-upgrade'
+check '  and keeps no receipt' [ ! -e "$RECEIPTS" ]
+fresh
+: >"$T/brew/present"
+echo 1 >"$T/brew/fail-check-from"
+out=$(S plan apps-common)
+rc=$?
+check 'bundle check errors in plan: a fail row, and plan exits non-zero' has "$out" 'fail  setup.d/brew/common.Brewfile'
+check '  exit status' [ "$rc" -ne 0 ]
+
+echo
+echo '== no terminal and no --yes'
+fresh
+seed write com.apple.sharingd DiscoverableMode -string Everyone
+: >"$SETUP_TEST_LOG"
+out=$(S apply privacy </dev/null)
+rc=$?
+check 'apply without --yes and without a terminal stops' [ "$rc" -ne 0 ]
+check '  and writes nothing' [ "$(get read com.apple.sharingd DiscoverableMode)" = Everyone ]
+check '  and runs nothing' [ -z "$(calls)" ]
+
+echo
+echo '== links: apply only from ~/.dotfiles'
+if [ -x "$repo/dotbot/bin/dotbot" ] && xcode-select -p >/dev/null 2>&1; then
+  # A stand-in repo: the real dotbot and install.conf.yaml, dummy link sources.
+  # ./install is never run here (SETUP_TEST records it).
+  for d in "$T/tree" "$HOME/.dotfiles"; do
+    mkdir -p "$d/zsh" "$d/gitconfig" "$d/dotbot"
+    : >"$d/zsh/zshrc"
+    : >"$d/gitconfig/gitconfig"
+    cp "$repo/install" "$repo/install.conf.yaml" "$d/"
+    cp -R "$repo/dotbot/bin" "$repo/dotbot/dotbot" "$repo/dotbot/lib" "$d/dotbot/"
+  done
+  cp -R "$T/tree/setup" "$T/tree/setup.d" "$HOME/.dotfiles/"
+  D() { env PATH="$HOME/.dotfiles/setup.d/test/bin:$SYS_PATH" "$sh_bin" "$HOME/.dotfiles/setup" "$@" 2>&1; }
+  # dotbot's clean deletes broken links in ~ that point into the repo.
+  ln -s "$HOME/.dotfiles/zsh/removed" "$HOME/.gone"
+  ln -s /nonexistent/elsewhere "$HOME/.elsewhere"
+  ln -s "$HOME/.dotfiles/zsh/zshrc" "$HOME/.fine"
+  fresh
+  out=$(S apply --yes dotfiles)
+  rc=$?
+  transcript "$out"
+  check 'from another checkout: plan carries the note' has "$out" 'apply refuses here'
+  check '  apply refuses the links' has "$out" 'run from ~/.dotfiles (refused)'
+  check '  exits non-zero' [ "$rc" -ne 0 ]
+  check '  ./install is not run' lacks "$(calls)" '/install'
+  check '  no link receipt' lacks "$(receipts)" 'link ~/'
+  fresh
+  out=$(D plan dotfiles)
+  check 'from ~/.dotfiles: plan lists the broken link into the repo for removal' has "$out" '~/.gone'
+  check '  as broken link → removed' has "$(printf '%s\n' "$out" | grep '~/.gone')" 'broken link to ~/.dotfiles/zsh/removed → removed'
+  check '  but not a broken link elsewhere' lacks "$out" '.elsewhere'
+  check '  nor a link that works' lacks "$out" '.fine'
+  mkdir -p "$T/home2"
+  ln -s "$HOME/.dotfiles/zsh/removed" "$T/home2/.gone"
+  ln -s /nonexistent/elsewhere "$T/home2/.elsewhere"
+  ln -s "$HOME/.dotfiles/zsh/zshrc" "$T/home2/.fine"
+  HOME="$T/home2" PYTHONDONTWRITEBYTECODE=1 "$HOME/.dotfiles/dotbot/bin/dotbot" -q -d "$HOME/.dotfiles" -c "$HOME/.dotfiles/install.conf.yaml" --only clean >/dev/null 2>&1
+  check "  dotbot's own clean removes exactly that link" [ "$(ls -A "$T/home2" | tr '\n' ' ')" = '.elsewhere .fine ' ]
+  out=$(D apply --yes dotfiles)
+  rc=$?
+  transcript "$out"
+  check 'from ~/.dotfiles: apply exits 0' [ "$rc" -eq 0 ]
+  check '  ./install is the command recorded' has "$(calls)" "run: \"$HOME/.dotfiles/install\""
+  r=$(receipts)
+  check '  a receipt per link, with what was there' has "$r" "dotfiles${TAB}link ~/.zshrc${TAB}create${TAB}missing"
+  check '  a receipt for the removed broken link' has "$r" "dotfiles${TAB}clean ~/.gone${TAB}remove${TAB}broken link to $HOME/.dotfiles/zsh/removed"
+  out=$(D undo --yes dotfiles)
+  check 'undo prints the removal instead of running it' has "$out" 'by hand: rm ~/.zshrc'
+  check '  and how to put the broken link back' has "$out" "by hand: ln -s $HOME/.dotfiles/zsh/removed ~/.gone"
+  check '  and drops the receipts' [ ! -e "$RECEIPTS" ]
+else
+  echo 'SKIP  dotbot is not fetched, or the Command Line Tools are missing'
+fi
+
+echo
+echo '== README module table'
+if [ -f "$repo/README.md" ]; then
+  table=$(env PATH="$SYS_PATH" "$sh_bin" "$repo/setup" readme)
+  block=$(sed -n '/<!-- modules:start -->/,/<!-- modules:end -->/p' "$repo/README.md" | sed '1d;$d')
+  check 'README holds exactly what ./setup readme prints' [ "$table" = "$block" ]
+else
+  echo 'SKIP  no README.md beside setup (a copy of setup and setup.d only)'
+fi
+
+echo
+printf '%d passed, %d failed\n' "$passed" "$failed"
+[ "$failed" -eq 0 ]
